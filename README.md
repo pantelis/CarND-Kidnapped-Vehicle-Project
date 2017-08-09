@@ -1,1 +1,0 @@
-# CarND-Kidnapped-Vehicle-Project
