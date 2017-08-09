@@ -6,3 +6,12 @@ solution_data
 src/particle_filter_sol.cpp
 src/solutions
 particle_filter.cpp
+-CMakeCache.txt
+-CMakeFiles
+-CMakeScripts
+-Testing
+-Makefile
+-cmake_install.cmake
+-install_manifest.txt
+-compile_commands.json
+-CTestTestfile.cmake
