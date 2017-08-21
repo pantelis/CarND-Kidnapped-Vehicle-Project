@@ -1,10 +1,3 @@
-/*
- * particle_filter.cpp
- *
- *  Created on: Dec 12, 2016
- *      Author: Tiffany Huang
- */
-
 #include <random>
 #include <algorithm>
 #include <iostream>
@@ -27,29 +20,27 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
     // Adds random Gaussian noise to each particle.
     // NOTE: Consult particle_filter.h for more information about this method (and others in this file).
 
-    if (!is_initialized)
-    {
-        num_particles = 10000;
 
-        // construct a random generator engine from a time-based seed:
-        unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
-        std::default_random_engine generator(seed);
+    num_particles = 20;
 
-        // parameterize the normal distributions for x, y and theta
-        // the mean is the reported x, y GPS coordinates and the heading (yaw) that the simulator sends to the filter
-        std::normal_distribution<double> dist_x(x, std[0]);
-        std::normal_distribution<double> dist_y(y, std[1]);
-        std::normal_distribution<double> dist_theta(theta, std[2]);
+    // construct a random generator engine from a time-based seed:
+    unsigned seed = static_cast<unsigned int>(std::chrono::system_clock::now().time_since_epoch().count());
+    std::default_random_engine generator(seed);
 
-        // initialize the particles
-        for (int i = 0; i < num_particles; i++) {
-            Particle p{.id = i, .x = dist_x(generator), .y = dist_y(generator), .theta = dist_theta(
-                    generator), .weight = 1.};
-            particles.push_back(p);
-        }
+    // parameterize the normal distributions for x, y and theta
+    // the mean is the reported x, y GPS coordinates and the heading (yaw) that the simulator sends to the filter
+    std::normal_distribution<double> dist_x(x, std[0]);
+    std::normal_distribution<double> dist_y(y, std[1]);
+    std::normal_distribution<double> dist_theta(theta, std[2]);
 
-        is_initialized = true;
+    // initialize the particles
+    for (int i = 0; i < num_particles; i++) {
+        Particle p{.id = i, .x = dist_x(generator), .y = dist_y(generator), .theta = dist_theta(
+                generator), .weight = 1.};
+        particles.push_back(p);
     }
+
+    is_initialized = true;
 
 }
 
@@ -91,6 +82,8 @@ void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::ve
     //   observed measurement to this particular landmark.
     // NOTE: this method will NOT be called by the grading code. But you will probably find it useful to
     //   implement this method and use it as a helper during the updateWeights phase.
+    // NOTE 2: the first parameter has a rather misleading name: it is just the list of landmarks as provided by the map,
+    // that you read from file data/map_data.txt;
 
 }
 
@@ -106,14 +99,15 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
     //   3.33
     //   http://planning.cs.uiuc.edu/node99.html
 
-    unsigned num_observations = static_cast<unsigned int>(observations.size());
-    unsigned num_landmarks = static_cast<unsigned int>(map_landmarks.landmark_list.size());
+    auto num_observations = static_cast<unsigned int>(observations.size());
+    auto num_landmarks = static_cast<unsigned int>(map_landmarks.landmark_list.size());
 
     std::vector<LandmarkObs> observations_gcs;
 
     for (int i = 0; i < num_particles; i++) {
+        cout << "Particle " << i << endl;
 
-        vector<unsigned int> associations(num_observations);
+        vector<int> associations(num_observations);
         double sum_measurement_likelihoods(0.0);
         for (int m = 0; m < num_observations; m++) {
 
@@ -150,8 +144,8 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
                     min_distance = distance_observation_landmark;
                     associations[m] = static_cast<unsigned int>(l);
                 }
-
             }
+
             // Likelihood of each measurement
 
             /* The mean of the Multivariate-Gaussian is the measurement's associated landmark position and the
@@ -163,22 +157,25 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 
             double gauss_norm = 1./(2. * M_PI * std_landmark[0] * std_landmark[1]);
 
-            // is the Sigma 3x3 ? (x, y, rho, phi)
-            double exponent= pow(observations_gcs[m].x - map_landmarks.landmark_list[associations[m]].x_f, 2)/(2 * pow(std_landmark[0],2))
-                             + pow(observations_gcs[m].y - map_landmarks.landmark_list[associations[m]].y_f, 2)/(2 * pow(std_landmark[1],2));
+            double exponent= pow(observations_gcs[m].x - map_landmarks.landmark_list[associations[m]].x_f, 2)/(2. * pow(std_landmark[0], 2))
+                             + pow(observations_gcs[m].y - map_landmarks.landmark_list[associations[m]].y_f, 2)/(2. * pow(std_landmark[1], 2));
 
             double measurement_likelihood = gauss_norm * exp(-exponent);
+
+            cout << "Likelihood of measurement " << m << " = " << measurement_likelihood << endl;
+
             sum_measurement_likelihoods += measurement_likelihood;
             particles[i].weight *= measurement_likelihood;
 
         }
+        // Store the asociations of each particle to the in-range landmarks
+        particles[i].associations = associations;
 
         // Normalize particle weight
         particles[i].weight /= sum_measurement_likelihoods;
-
-
-
+        cout << "Weight " <<  " = " << particles[i].weight << endl;
     }
+
 }
 
 template<typename Iter_T>
@@ -192,52 +189,31 @@ void ParticleFilter::resample() {
     //   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
 
 //    bool resampling_flag;
-//    long double EPSILON = 1.e-12;
-
-
-    // norm squared of latest particle weights
-    long double newWeightsL2NormSq = pow(vectorNorm(weights.begin(), weights.end()), 2.0);
+//
+//    // norm squared of latest particle weights
+//    long double newWeightsL2NormSq = pow(vectorNorm(weights.begin(), weights.end()), 2.0);
 
     // Resampling
     std::random_device rd;
     std::mt19937 gen(rd());
     std::discrete_distribution<> d(weights.begin(), weights.end());
 
-//    std::map<int, int> m;
-//    for(int i=0; i < num_particles; i++) {
-//        ++m[d(gen)];
-//    }
-//
-//    int i=0;
-//    for(auto p : m) {
-//        std::cout << "particle " << p.first << " resampled " << p.second << " times\n";
-//        particles[i++] = particles[p.first];
-//    }
+    std::map<int, int> m;
+    for(int i=0; i < num_particles; i++) {
+        ++m[d(gen)];
+    }
+
+    int i=0;
+    for(auto p : m) {
+        std::cout << "particle " << p.first << " resampled " << p.second << " times\n";
+        particles[i++] = particles[p.first];
+    }
 
     for(int i=0; i < num_particles; i++) {
         particles[i] = particles[d(gen)];
     }
 
-//    double Neff = 1. / max(EPSILON, newWeightsL2NormSq)
-//
-//    if (Neff >= pfResamplingThreshold * num_particles)
-//        newParticleIndices = range(self.numParticles)
-//        resampling_flag = False
-//    print("***** No resampling particles *********")
-//    else:
-    //newParticleIndices = np.random.choice(self.numParticles, self.numParticles,
-    //                                      list(self.latestParticleWeights))
-    // resampling_flag = true;
-    //print("***** Resampling particles *********")
 
-
-//    self.latestParticles[j] = newParticles[newParticleIndices[j]]
-//
-//    if resampling:
-//        self.latestParticles[j].weight = (1.0 / self.numParticles)
-//    self.latestParticleWeights = (1.0 / self.numParticles) * np.ones(self.numParticles)
-//
-//    return
 
 }
 
