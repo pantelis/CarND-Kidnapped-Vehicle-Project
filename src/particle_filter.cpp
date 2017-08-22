@@ -48,12 +48,12 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
     // Predicts new particle position and yaw using a simple motion model.
     // Adds random Gaussian noise to particle predicted state
 
-    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+    unsigned seed = 100;//std::chrono::system_clock::now().time_since_epoch().count();
     std::default_random_engine generator(seed);
 
     for (int i = 0; i < num_particles; i++) {
 
-        if (fabs(yaw_rate) > 0.001) {
+        if (fabs(yaw_rate) > 0.00001) {
             particles[i].x +=
                     (velocity / yaw_rate) * (sin(particles[i].theta + yaw_rate * delta_t) - sin(particles[i].theta));
             particles[i].y +=
@@ -66,13 +66,15 @@ void ParticleFilter::prediction(double delta_t, double std_pos[], double velocit
         particles[i].theta = yaw_rate * delta_t;
 
         // add motion/control model uncertainty
-        std::normal_distribution<double> dist_x(particles[i].x, std_pos[0]);
-        std::normal_distribution<double> dist_y(particles[i].y, std_pos[1]);
-        std::normal_distribution<double> dist_theta(particles[i].theta, std_pos[2]);
+        std::normal_distribution<double> dist_x(0.0, std_pos[0]);
+        std::normal_distribution<double> dist_y(0.0, std_pos[1]);
+        std::normal_distribution<double> dist_theta(0.0, std_pos[2]);
 
         particles[i].x += dist_x(generator);
         particles[i].y += dist_y(generator);
         particles[i].theta += dist_theta(generator);
+
+        cout << "Predicted Position of Particle " << i << ": (" << particles[i].x <<"," << particles[i].y << ")" << endl;
     }
 
 }
@@ -109,9 +111,10 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 
         vector<int> associations(num_observations);
         double sum_measurement_likelihoods(0.0);
+        particles[i].weight = 1.;
         for (int m = 0; m < num_observations; m++) {
 
-            // The observations are given in the VEHICLE'S coordinate system. Transform the observation in the global
+            // The observations (lidar measurements) are given in the VEHICLE'S coordinate system. Transform the observation in the global
             // coordinate system. This transformation requires both rotation AND translation (but no scaling).
             //   The following is a good resource for the theory:
             //   https://www.willamette.edu/~gorr/classes/GeneralGraphics/Transforms/transforms2d.htm
@@ -130,11 +133,10 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 
             observations_gcs.push_back(observation_gcs);
 
+            // associate each observation to a landmark
             double min_distance = sensor_range;
-
             for (int l = 0; l < num_landmarks; l++) {
 
-                // associate each observation to a landmark
                 double distance_observation_landmark =
                         dist(observations_gcs[m].x, observations_gcs[m].y, map_landmarks.landmark_list[l].x_f,
                              map_landmarks.landmark_list[l].y_f);
@@ -143,8 +145,18 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 
                     min_distance = distance_observation_landmark;
                     associations[m] = static_cast<unsigned int>(l);
+
                 }
+
             }
+
+            cout << "Measurement "
+                 << observation_gcs.id <<
+                 " with GCS coordinates (" <<
+                 observation_gcs.x << "," <<
+                 observation_gcs.y << ")  is associated with landmark ID "
+                 << associations[m]+1 << " with coordinates (" << map_landmarks.landmark_list[associations[m]].x_f <<
+                 "," << map_landmarks.landmark_list[associations[m]].y_f << ")" << endl;
 
             // Likelihood of each measurement
 
@@ -157,23 +169,28 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 
             double gauss_norm = 1./(2. * M_PI * std_landmark[0] * std_landmark[1]);
 
-            double exponent= pow(observations_gcs[m].x - map_landmarks.landmark_list[associations[m]].x_f, 2)/(2. * pow(std_landmark[0], 2))
+            double exponent = pow(observations_gcs[m].x - map_landmarks.landmark_list[associations[m]].x_f, 2)/(2. * pow(std_landmark[0], 2))
                              + pow(observations_gcs[m].y - map_landmarks.landmark_list[associations[m]].y_f, 2)/(2. * pow(std_landmark[1], 2));
 
             double measurement_likelihood = gauss_norm * exp(-exponent);
 
             cout << "Likelihood of measurement " << m << " = " << measurement_likelihood << endl;
 
-            sum_measurement_likelihoods += measurement_likelihood;
             particles[i].weight *= measurement_likelihood;
 
         }
-        // Store the asociations of each particle to the in-range landmarks
-        particles[i].associations = associations;
 
-        // Normalize particle weight
-        particles[i].weight /= sum_measurement_likelihoods;
-        cout << "Weight " <<  " = " << particles[i].weight << endl;
+        // Store particle weights
+        weights.push_back(particles[i].weight);
+    }
+
+    // Normalize particle weight
+    double sum_weights = std::accumulate(weights.begin(), weights.end(), 0.);
+    cout << "Sum of weights across particles = " << sum_weights << endl;
+
+    for (int i=0; i < num_particles; i++){
+        weights[i] /= sum_weights;
+        cout << "Normalized Particle Weight " <<  " = " << weights[i] << endl;
     }
 
 }
@@ -188,29 +205,28 @@ void ParticleFilter::resample() {
     // NOTE: You may find std::discrete_distribution helpful here.
     //   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
 
-//    bool resampling_flag;
-//
-//    // norm squared of latest particle weights
-//    long double newWeightsL2NormSq = pow(vectorNorm(weights.begin(), weights.end()), 2.0);
+    // norm squared of latest particle weights
+    long double newWeightsL2NormSq = pow(vectorNorm(weights.begin(), weights.end()), 2.0);
 
     // Resampling
     std::random_device rd;
     std::mt19937 gen(rd());
     std::discrete_distribution<> d(weights.begin(), weights.end());
 
-    std::map<int, int> m;
-    for(int i=0; i < num_particles; i++) {
-        ++m[d(gen)];
-    }
-
-    int i=0;
-    for(auto p : m) {
-        std::cout << "particle " << p.first << " resampled " << p.second << " times\n";
-        particles[i++] = particles[p.first];
-    }
+//    std::map<int, int> m;
+//    for(int i=0; i < num_particles; i++) {
+//        ++m[d(gen)];
+//    }
+//
+//    int i=0;
+//    for(auto p : m) {
+//        std::cout << "particle " << p.first << " resampled " << p.second << " times\n";
+//        particles[i++] = particles[p.first];
+//    }
 
     for(int i=0; i < num_particles; i++) {
         particles[i] = particles[d(gen)];
+        cout << d(gen) << endl;
     }
 
 

@@ -65,6 +65,7 @@ int main()
                 if (event == "telemetry") {
                     // j[1] is the data JSON object
 
+                    cout << "------------------- new data sent from sim -------------------" << endl;
 
                     if (!pf.initialized()) {
 
