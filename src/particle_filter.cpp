@@ -130,7 +130,6 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
         }
         int num_in_range_landmarks = (int) landmarks_in_range.landmark_list.size();
 
-        vector<int> associations(num_observations);
         std::vector<LandmarkObs> observations_gcs;
         for (auto &m : observations) {
 
