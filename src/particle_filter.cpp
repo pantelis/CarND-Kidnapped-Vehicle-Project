@@ -1,3 +1,4 @@
+
 #include <random>
 #include <algorithm>
 #include <iostream>
@@ -21,7 +22,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
     // NOTE: Consult particle_filter.h for more information about this method (and others in this file).
 
 
-    num_particles = 20;
+    num_particles = 10;
 
     // construct a random generator engine from a time-based seed:
     unsigned seed = static_cast<unsigned int>(std::chrono::system_clock::now().time_since_epoch().count());
@@ -38,6 +39,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
         Particle p{.id = i, .x = dist_x(generator), .y = dist_y(generator), .theta = dist_theta(
                 generator), .weight = 1.};
         particles.push_back(p);
+        weights.push_back(1.);
     }
 
     is_initialized = true;
@@ -45,36 +47,40 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
 }
 
 void ParticleFilter::prediction(double delta_t, double std_pos[], double velocity, double yaw_rate) {
-    // Predicts new particle position and yaw using a simple motion model.
-    // Adds random Gaussian noise to particle predicted state
+    // Predicts  resampled particles new position and yaw using a simple motion model.
+    // Adds random Gaussian noise to abstract noisy motion model
 
     unsigned seed = 100;//std::chrono::system_clock::now().time_since_epoch().count();
     std::default_random_engine generator(seed);
 
-    for (int i = 0; i < num_particles; i++) {
+    // add motion/control model uncertainty
+    std::normal_distribution<double> dist_x(0.0, std_pos[0]);
+    std::normal_distribution<double> dist_y(0.0, std_pos[1]);
+    std::normal_distribution<double> dist_theta(0.0, std_pos[2]);
 
-        if (fabs(yaw_rate) > 0.00001) {
-            particles[i].x +=
-                    (velocity / yaw_rate) * (sin(particles[i].theta + yaw_rate * delta_t) - sin(particles[i].theta));
-            particles[i].y +=
-                    (velocity / yaw_rate) * (-cos(particles[i].theta + yaw_rate * delta_t) + cos(particles[i].theta));
+    for (auto &p : particles) {
+
+        cout << "Previous Position of Particle " << p.id << ": (" << p.x << "," << p.y << ")"
+             << endl;
+
+        if (fabs(yaw_rate) > 0.001) {
+            p.x +=
+                    (velocity / yaw_rate) * (sin(p.theta + yaw_rate * delta_t) - sin(p.theta));
+            p.y +=
+                    (velocity / yaw_rate) * (-cos(p.theta + yaw_rate * delta_t) + cos(p.theta));
         } else {
-            particles[i].x += velocity * cos(particles[i].theta) * delta_t;
-            particles[i].y += velocity * sin(particles[i].theta) * delta_t;
+            p.x += velocity * cos(p.theta) * delta_t;
+            p.y += velocity * sin(p.theta) * delta_t;
         }
 
-        particles[i].theta = yaw_rate * delta_t;
+        p.theta += yaw_rate * delta_t;
 
-        // add motion/control model uncertainty
-        std::normal_distribution<double> dist_x(0.0, std_pos[0]);
-        std::normal_distribution<double> dist_y(0.0, std_pos[1]);
-        std::normal_distribution<double> dist_theta(0.0, std_pos[2]);
+        p.x += dist_x(generator);
+        p.y += dist_y(generator);
+        p.theta += dist_theta(generator);
 
-        particles[i].x += dist_x(generator);
-        particles[i].y += dist_y(generator);
-        particles[i].theta += dist_theta(generator);
-
-        cout << "Predicted Position of Particle " << i << ": (" << particles[i].x <<"," << particles[i].y << ")" << endl;
+        cout << "Predicted Position of Particle " << p.id << ": (" << p.x << "," << p.y << ")"
+             << endl;
     }
 
 }
@@ -102,52 +108,63 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
     //   http://planning.cs.uiuc.edu/node99.html
 
     auto num_observations = static_cast<unsigned int>(observations.size());
-    auto num_landmarks = static_cast<unsigned int>(map_landmarks.landmark_list.size());
+    auto num_map_landmarks = static_cast<unsigned int>(map_landmarks.landmark_list.size());
 
-    std::vector<LandmarkObs> observations_gcs;
 
-    for (int i = 0; i < num_particles; i++) {
-        cout << "Particle " << i << endl;
+    Map landmarks_in_range;
+    landmarks_in_range.landmark_list.clear();
+    weights.clear();
+
+    for (auto &p : particles) {
+        p.weight = 1.;
+
+        cout << "Particle " << p.id << " performs " << num_observations << " LIDAR measurements" << endl;
+
+        for (int j = 0; j < map_landmarks.landmark_list.size(); j++) {
+            double distance = dist(p.x, p.y, map_landmarks.landmark_list[j].x_f,
+                                   map_landmarks.landmark_list[j].y_f);
+
+            if (distance < sensor_range) {
+                landmarks_in_range.landmark_list.push_back(map_landmarks.landmark_list[j]);
+            }
+        }
+        int num_in_range_landmarks = (int) landmarks_in_range.landmark_list.size();
 
         vector<int> associations(num_observations);
-        double sum_measurement_likelihoods(0.0);
-        particles[i].weight = 1.;
-        for (int m = 0; m < num_observations; m++) {
+        std::vector<LandmarkObs> observations_gcs;
+        for (auto &m : observations) {
 
-            // The observations (lidar measurements) are given in the VEHICLE'S coordinate system. Transform the observation in the global
-            // coordinate system. This transformation requires both rotation AND translation (but no scaling).
+            // The observations (lidar measurements) are given in the VEHICLE'S coordinate system. Transform the observation
+            // in the global coordinate system (GCS). This transformation requires both rotation AND translation (but no scaling).
             //   The following is a good resource for the theory:
             //   https://www.willamette.edu/~gorr/classes/GeneralGraphics/Transforms/transforms2d.htm
             //   and the following is a good resource for the actual equation to implement (look at equation
             //   3.33 http://planning.cs.uiuc.edu/node99.html
 
-            double observations_gcs_x =
-                    observations[m].x * cos(particles[i].theta) - observations[m].y * sin(particles[i].theta);
-            double observations_gcs_y =
-                    observations[m].x * sin(particles[i].theta) + observations[m].y * cos(particles[i].theta);
+            double observation_gcs_x =
+                    p.x + m.x * cos(p.theta) - m.y * sin(p.theta);
+            double observation_gcs_y =
+                    p.y + m.x * sin(p.theta) + m.y * cos(p.theta);
 
-            observations_gcs_x += particles[i].x;
-            observations_gcs_y += particles[i].y;
-
-            LandmarkObs observation_gcs = {m, observations_gcs_x, observations_gcs_y};
-
+            // Store the transformed coordinates
+            LandmarkObs observation_gcs = {m.id, observation_gcs_x, observation_gcs_y};
             observations_gcs.push_back(observation_gcs);
 
-            // associate each observation to a landmark
+            // associate each observation to a landmark within LIDAR sensor range
             double min_distance = sensor_range;
-            for (int l = 0; l < num_landmarks; l++) {
+            int association = 999;
+            for (int l = 0; l < num_in_range_landmarks; l++) {
 
                 double distance_observation_landmark =
-                        dist(observations_gcs[m].x, observations_gcs[m].y, map_landmarks.landmark_list[l].x_f,
-                             map_landmarks.landmark_list[l].y_f);
+                        dist(observation_gcs_x, observation_gcs_y, landmarks_in_range.landmark_list[l].x_f,
+                             landmarks_in_range.landmark_list[l].y_f);
 
                 if (distance_observation_landmark < min_distance) {
 
                     min_distance = distance_observation_landmark;
-                    associations[m] = static_cast<unsigned int>(l);
-
+                    association = landmarks_in_range.landmark_list[l].id_i;
+                    cout << "association = " << association << endl;
                 }
-
             }
 
             cout << "Measurement "
@@ -155,8 +172,8 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
                  " with GCS coordinates (" <<
                  observation_gcs.x << "," <<
                  observation_gcs.y << ")  is associated with landmark ID "
-                 << associations[m]+1 << " with coordinates (" << map_landmarks.landmark_list[associations[m]].x_f <<
-                 "," << map_landmarks.landmark_list[associations[m]].y_f << ")" << endl;
+                 << association << " with coordinates (" << map_landmarks.landmark_list[association-1].x_f <<
+                 "," << map_landmarks.landmark_list[association-1].y_f << ")" << endl;
 
             // Likelihood of each measurement
 
@@ -169,68 +186,37 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 
             double gauss_norm = 1./(2. * M_PI * std_landmark[0] * std_landmark[1]);
 
-            double exponent = pow(observations_gcs[m].x - map_landmarks.landmark_list[associations[m]].x_f, 2)/(2. * pow(std_landmark[0], 2))
-                             + pow(observations_gcs[m].y - map_landmarks.landmark_list[associations[m]].y_f, 2)/(2. * pow(std_landmark[1], 2));
+            double exponent = pow(observation_gcs_x - map_landmarks.landmark_list[association-1].x_f, 2)/(2. * pow(std_landmark[0], 2))
+                             + pow(observation_gcs_y - map_landmarks.landmark_list[association-1].y_f, 2)/(2. * pow(std_landmark[1], 2));
 
             double measurement_likelihood = gauss_norm * exp(-exponent);
 
-            cout << "Likelihood of measurement " << m << " = " << measurement_likelihood << endl;
+            cout << "Likelihood of measurement " << m.id << " = " << measurement_likelihood << endl;
 
-            particles[i].weight *= measurement_likelihood;
+            p.weight *= measurement_likelihood;
 
         }
 
         // Store particle weights
-        weights.push_back(particles[i].weight);
+        weights.push_back(p.weight);
+        landmarks_in_range.landmark_list.clear();
     }
-
-    // Normalize particle weight
-    double sum_weights = std::accumulate(weights.begin(), weights.end(), 0.);
-    cout << "Sum of weights across particles = " << sum_weights << endl;
-
-    for (int i=0; i < num_particles; i++){
-        weights[i] /= sum_weights;
-        cout << "Normalized Particle Weight " <<  " = " << weights[i] << endl;
-    }
-
-}
-
-template<typename Iter_T>
-long double vectorNorm(Iter_T first, Iter_T last) {
-    return sqrt(inner_product(first, last, first, 0.0L));
 }
 
 void ParticleFilter::resample() {
-    // TODO: Resample particles with replacement with probability proportional to their weight.
-    // NOTE: You may find std::discrete_distribution helpful here.
-    //   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
-
-    // norm squared of latest particle weights
-    long double newWeightsL2NormSq = pow(vectorNorm(weights.begin(), weights.end()), 2.0);
+    // Resample particles with replacement with probability proportional to their weight w.
+    // We use the std::discrete_distribution where probability of each of the n possible numbers to be produced
+    // is their corresponding weight divided by the total of all weights. There is no need for explicit normalization.
 
     // Resampling
     std::random_device rd;
     std::mt19937 gen(rd());
     std::discrete_distribution<> d(weights.begin(), weights.end());
 
-//    std::map<int, int> m;
-//    for(int i=0; i < num_particles; i++) {
-//        ++m[d(gen)];
-//    }
-//
-//    int i=0;
-//    for(auto p : m) {
-//        std::cout << "particle " << p.first << " resampled " << p.second << " times\n";
-//        particles[i++] = particles[p.first];
-//    }
 
     for(int i=0; i < num_particles; i++) {
         particles[i] = particles[d(gen)];
-        cout << d(gen) << endl;
     }
-
-
-
 }
 
 Particle ParticleFilter::SetAssociations(Particle particle, std::vector<int> associations, std::vector<double> sense_x,

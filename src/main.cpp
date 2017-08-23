@@ -107,6 +107,7 @@ int main()
                     for(int i = 0; i < x_sense.size(); i++)
                     {
                         LandmarkObs obs;
+                        obs.id = i;
                         obs.x = x_sense[i];
                         obs.y = y_sense[i];
                         noisy_observations.push_back(obs);
@@ -143,7 +144,7 @@ int main()
                     msgJson["best_particle_sense_y"] = pf.getSenseY(best_particle);
 
                     auto msg = "42[\"best_particle\"," + msgJson.dump() + "]";
-                    std::cout << msg << std::endl;
+                    // std::cout << msg << std::endl;
                     ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
 
                 }
