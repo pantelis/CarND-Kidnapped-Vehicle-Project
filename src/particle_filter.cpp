@@ -213,9 +213,18 @@ void ParticleFilter::resample() {
     std::discrete_distribution<> d(weights.begin(), weights.end());
 
 
-    for(int i=0; i < num_particles; i++) {
-        particles[i] = particles[d(gen)];
+//    for(int i=0; i < num_particles; i++) {
+//        particles[i] = particles[d(gen)];
+//    }
+
+    vector<Particle> resampled_particles(num_particles);
+
+    for (int i = 0; i < num_particles; ++i) {
+        int index = d(gen);
+        resampled_particles.at(i) = particles.at(index);
     }
+    particles = resampled_particles;
+
 }
 
 Particle ParticleFilter::SetAssociations(Particle particle, std::vector<int> associations, std::vector<double> sense_x,
